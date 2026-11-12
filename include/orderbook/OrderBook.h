@@ -31,6 +31,9 @@ public:
     //   CannotFullyFill : FillOrKill without enough liquidity within its limit
     AddResult AddOrder(OrderPointer order);
 
+    // Same, taking the order by value. The book keeps its own copy.
+    AddResult AddOrder(const Order& order);
+
     // UnknownOrderId if the id is not live.
     CancelResult CancelOrder(OrderId orderId);
 
@@ -51,8 +54,15 @@ private:
         OrderPointers::iterator location_;
     };
 
-    std::map<Price, OrderPointers, std::greater<Price>> bids_;  // best (highest) first
-    std::map<Price, OrderPointers, std::less<Price>> asks_;     // best (lowest) first
+    // A price level: FIFO queue plus its running total, kept in sync on every
+    // add / fill / cancel so depth snapshots and FOK checks are O(levels), not O(orders).
+    struct Level {
+        OrderPointers orders_;
+        Quantity quantity_{0};
+    };
+
+    std::map<Price, Level, std::greater<Price>> bids_;  // best (highest) first
+    std::map<Price, Level, std::less<Price>> asks_;     // best (lowest) first
     std::unordered_map<OrderId, OrderEntry> orders_;
 
     bool CanMatch(Side side, Price price) const;

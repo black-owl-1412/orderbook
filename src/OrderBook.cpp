@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <iterator>
-#include <numeric>
 
 namespace orderbook {
 
@@ -10,25 +9,26 @@ namespace {
 
 // Removes one order from its price level and drops the level if it is now empty.
 template <typename Levels>
-void EraseFromLevel(Levels& levels, Price price, OrderPointers::iterator location) {
+void EraseFromLevel(Levels& levels, Price price, OrderPointers::iterator location,
+                    Quantity remaining) {
     auto level = levels.find(price);
-    level->second.erase(location);
-    if (level->second.empty())
+    level->second.quantity_ -= remaining;
+    level->second.orders_.erase(location);
+    if (level->second.orders_.empty())
         levels.erase(level);
 }
 
 // Walks levels best-first while `acceptable(price)` holds and reports whether
-// at least `needed` quantity is resting there. O(orders inspected).
+// at least `needed` quantity is resting there. O(levels inspected), thanks to
+// the per-level running totals.
 template <typename Levels, typename Acceptable>
 bool HasLiquidity(const Levels& levels, Acceptable acceptable, Quantity needed) {
-    for (const auto& [price, orders] : levels) {
+    for (const auto& [price, level] : levels) {
         if (!acceptable(price))
             break;
-        for (const auto& order : orders) {
-            if (order->GetRemainingQuantity() >= needed)
-                return true;
-            needed -= order->GetRemainingQuantity();
-        }
+        if (level.quantity_ >= needed)
+            return true;
+        needed -= level.quantity_;
     }
     return false;
 }
@@ -64,8 +64,10 @@ Trades OrderBook::MatchOrders(Side aggressorSide) {
         const Price executionPrice =
             aggressorSide == Side::Buy ? askLevel->first : bidLevel->first;
 
-        OrderPointers& bids = bidLevel->second;
-        OrderPointers& asks = askLevel->second;
+        Level& bidLvl = bidLevel->second;
+        Level& askLvl = askLevel->second;
+        OrderPointers& bids = bidLvl.orders_;
+        OrderPointers& asks = askLvl.orders_;
 
         while (!bids.empty() && !asks.empty()) {
             // Copy the shared_ptrs: front() references would dangle after pop_front().
@@ -76,6 +78,8 @@ Trades OrderBook::MatchOrders(Side aggressorSide) {
                 std::min(bid->GetRemainingQuantity(), ask->GetRemainingQuantity());
             bid->Fill(quantity);
             ask->Fill(quantity);
+            bidLvl.quantity_ -= quantity;
+            askLvl.quantity_ -= quantity;
 
             trades.emplace_back(TradeInfo{bid->GetOrderId(), executionPrice, quantity},
                                 TradeInfo{ask->GetOrderId(), executionPrice, quantity});
@@ -102,14 +106,14 @@ Trades OrderBook::MatchOrders(Side aggressorSide) {
     // has a remainder) that was only partially filled is now resting at the top
     // of its side; kill the remainder. Copy the id before cancelling.
     if (!bids_.empty()) {
-        const OrderPointer& top = bids_.begin()->second.front();
+        const OrderPointer& top = bids_.begin()->second.orders_.front();
         if (IsImmediateOrCancel(top->GetOrderType())) {
             const OrderId id = top->GetOrderId();
             (void)CancelOrder(id);
         }
     }
     if (!asks_.empty()) {
-        const OrderPointer& top = asks_.begin()->second.front();
+        const OrderPointer& top = asks_.begin()->second.orders_.front();
         if (IsImmediateOrCancel(top->GetOrderType())) {
             const OrderId id = top->GetOrderId();
             (void)CancelOrder(id);
@@ -117,6 +121,10 @@ Trades OrderBook::MatchOrders(Side aggressorSide) {
     }
 
     return trades;
+}
+
+AddResult OrderBook::AddOrder(const Order& order) {
+    return AddOrder(std::make_shared<Order>(order));
 }
 
 AddResult OrderBook::AddOrder(OrderPointer order) {
@@ -145,13 +153,15 @@ AddResult OrderBook::AddOrder(OrderPointer order) {
 
     OrderPointers::iterator location;
     if (order->GetSide() == Side::Buy) {
-        auto& level = bids_[order->GetPrice()];
-        level.push_back(order);
-        location = std::prev(level.end());
+        Level& level = bids_[order->GetPrice()];
+        level.orders_.push_back(order);
+        level.quantity_ += order->GetRemainingQuantity();
+        location = std::prev(level.orders_.end());
     } else {
-        auto& level = asks_[order->GetPrice()];
-        level.push_back(order);
-        location = std::prev(level.end());
+        Level& level = asks_[order->GetPrice()];
+        level.orders_.push_back(order);
+        level.quantity_ += order->GetRemainingQuantity();
+        location = std::prev(level.orders_.end());
     }
 
     // Read id/side BEFORE moving `order`: the evaluation order of function
@@ -174,10 +184,11 @@ CancelResult OrderBook::CancelOrder(OrderId orderId) {
     orders_.erase(it);
 
     const Price price = entry.order_->GetPrice();
+    const Quantity remaining = entry.order_->GetRemainingQuantity();
     if (entry.order_->GetSide() == Side::Buy)
-        EraseFromLevel(bids_, price, entry.location_);
+        EraseFromLevel(bids_, price, entry.location_, remaining);
     else
-        EraseFromLevel(asks_, price, entry.location_);
+        EraseFromLevel(asks_, price, entry.location_, remaining);
     return {};
 }
 
@@ -210,22 +221,15 @@ std::vector<OrderId> OrderBook::CancelGoodForDayOrders() {
 }
 
 OrderBookLevelInfos OrderBook::GetOrderInfos() const {
-    auto makeLevelInfo = [](Price price, const OrderPointers& orders) {
-        const Quantity total = std::accumulate(
-            orders.begin(), orders.end(), Quantity{0},
-            [](Quantity sum, const OrderPointer& o) { return sum + o->GetRemainingQuantity(); });
-        return LevelInfo{price, total};
-    };
-
     LevelInfos bidInfos;
     LevelInfos askInfos;
     bidInfos.reserve(bids_.size());
     askInfos.reserve(asks_.size());
 
-    for (const auto& [price, orders] : bids_)
-        bidInfos.push_back(makeLevelInfo(price, orders));
-    for (const auto& [price, orders] : asks_)
-        askInfos.push_back(makeLevelInfo(price, orders));
+    for (const auto& [price, level] : bids_)
+        bidInfos.push_back(LevelInfo{price, level.quantity_});
+    for (const auto& [price, level] : asks_)
+        askInfos.push_back(LevelInfo{price, level.quantity_});
 
     return OrderBookLevelInfos{std::move(bidInfos), std::move(askInfos)};
 }

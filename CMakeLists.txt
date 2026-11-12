@@ -12,6 +12,7 @@ endif()
 
 option(ORDERBOOK_BUILD_TESTS "Build the unit tests" ON)
 option(ORDERBOOK_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+option(ORDERBOOK_BUILD_BENCHMARKS "Build benchmarks (use a Release build for real numbers)" ON)
 
 if(ORDERBOOK_SANITIZE)
   # Applied globally so the library, tests and any fetched deps agree.
@@ -47,9 +48,31 @@ if(ORDERBOOK_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)
   endif()
 
-  add_executable(orderbook_tests tests/OrderBookTests.cpp)
+  add_executable(orderbook_tests tests/OrderBookTests.cpp tests/DifferentialTests.cpp)
   target_link_libraries(orderbook_tests PRIVATE orderbook_core orderbook_warnings GTest::gtest_main)
 
   include(GoogleTest)
   gtest_discover_tests(orderbook_tests)
+endif()
+
+# ---- benchmarks ----
+if(ORDERBOOK_BUILD_BENCHMARKS)
+  find_package(benchmark QUIET)
+  if(NOT benchmark_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+      googlebenchmark
+      URL https://github.com/google/benchmark/archive/refs/tags/v1.9.1.tar.gz
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googlebenchmark)
+  endif()
+
+  add_executable(orderbook_bench bench/OrderBookBench.cpp)
+  target_link_libraries(orderbook_bench PRIVATE orderbook_core orderbook_warnings benchmark::benchmark)
+
+  add_executable(orderbook_latency bench/Latency.cpp)
+  target_link_libraries(orderbook_latency PRIVATE orderbook_core orderbook_warnings)
 endif()
