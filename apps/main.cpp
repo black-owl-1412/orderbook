@@ -1,34 +1,22 @@
 #include <memory>
 #include <print>
-#include <string_view>
 #include <utility>
 
 #include "orderbook/OrderBook.h"
+#include "orderbook/ToString.h"
 
 using namespace orderbook;
 
 namespace {
 
-std::string_view ToString(Side side) {
-    switch (side) {
-        case Side::Buy: return "BUY";
-        case Side::Sell: return "SELL";
+void PrintResult(const AddResult& result) {
+    if (!result) {
+        std::println("  REJECTED: {}", ToString(result.error()));
+        return;
     }
-    std::unreachable();  // every enumerator is handled above
-}
-
-std::string_view ToString(OrderType type) {
-    switch (type) {
-        case OrderType::GoodTillCancel: return "GTC";
-        case OrderType::FillAndKill: return "FAK";
-    }
-    std::unreachable();
-}
-
-void PrintTrades(const Trades& trades) {
-    if (trades.empty())
-        std::println("  (no trades)");
-    for (const auto& t : trades)
+    if (result->empty())
+        std::println("  accepted (no trades)");
+    for (const auto& t : *result)
         std::println("  TRADE bid#{} x ask#{}  {} @ {}", t.GetBidTrade().orderId_,
                      t.GetAskTrade().orderId_, t.GetQuantity(), t.GetPrice());
 }
@@ -46,9 +34,13 @@ void PrintBook(const OrderBook& book) {
     std::println("");
 }
 
-Trades Submit(OrderBook& book, OrderType type, OrderId id, Side side, Price price, Quantity qty) {
-    std::println("> #{} {} {} {} @ {}  (type id {})", id, ToString(type), ToString(side), qty,
-                 price, std::to_underlying(type));
+AddResult Submit(OrderBook& book, OrderType type, OrderId id, Side side, Price price, Quantity qty) {
+    if (type == OrderType::Market)
+        std::println("> #{} {} {} {}  (type id {})", id, ToString(type), ToString(side), qty,
+                     std::to_underlying(type));
+    else
+        std::println("> #{} {} {} {} @ {}  (type id {})", id, ToString(type), ToString(side), qty,
+                     price, std::to_underlying(type));
     return book.AddOrder(std::make_shared<Order>(type, id, side, qty, price));
 }
 
@@ -59,21 +51,37 @@ int main() {
 
     std::println("== Build a book ==");
     Submit(book, OrderType::GoodTillCancel, 1, Side::Buy, 99, 10);
-    Submit(book, OrderType::GoodTillCancel, 2, Side::Buy, 100, 5);
+    Submit(book, OrderType::GoodForDay, 2, Side::Buy, 100, 5);
     Submit(book, OrderType::GoodTillCancel, 3, Side::Sell, 101, 7);
-    Submit(book, OrderType::GoodTillCancel, 4, Side::Sell, 102, 8);
+    Submit(book, OrderType::GoodForDay, 4, Side::Sell, 102, 8);
+    Submit(book, OrderType::GoodTillCancel, 5, Side::Sell, 103, 10);
     PrintBook(book);
 
-    std::println("== Aggressive buy sweeps two ask levels ==");
-    PrintTrades(Submit(book, OrderType::GoodTillCancel, 5, Side::Buy, 102, 10));
+    std::println("== FillOrKill buy 20 @ 102: only 15 available up to 102 -> rejected ==");
+    PrintResult(Submit(book, OrderType::FillOrKill, 6, Side::Buy, 102, 20));
     PrintBook(book);
 
-    std::println("== FillAndKill sell: fills 15, remaining 5 is killed ==");
-    PrintTrades(Submit(book, OrderType::FillAndKill, 6, Side::Sell, 99, 20));
+    std::println("== FillOrKill buy 10 @ 102: enough liquidity -> fills fully ==");
+    PrintResult(Submit(book, OrderType::FillOrKill, 7, Side::Buy, 102, 10));
     PrintBook(book);
 
-    std::println("== Cancel #4 ==");
-    book.CancelOrder(4);
+    std::println("== Market sell 15: sweeps all bids at any price ==");
+    PrintResult(Submit(book, OrderType::Market, 8, Side::Sell, 0, 15));
+    PrintBook(book);
+
+    std::println("== Market sell 1: no bids left -> rejected ==");
+    PrintResult(Submit(book, OrderType::Market, 9, Side::Sell, 0, 1));
+    std::println("");
+
+    std::println("== Duplicate id / cancel unknown ==");
+    PrintResult(Submit(book, OrderType::GoodTillCancel, 5, Side::Buy, 90, 1));
+    if (auto r = book.CancelOrder(999); !r)
+        std::println("  cancel #999 REJECTED: {}", ToString(r.error()));
+    std::println("");
+
+    std::println("== End of day: GoodForDay orders expire ==");
+    for (const OrderId id : book.CancelGoodForDayOrders())
+        std::println("  expired #{}", id);
     PrintBook(book);
 
     return 0;

@@ -10,13 +10,18 @@ namespace orderbook {
 
 class Order {
 public:
+    // For OrderType::Market the given price is ignored and replaced by MarketPrice(side).
     Order(OrderType orderType, OrderId orderId, Side side, Quantity quantity, Price price)
         : orderType_{orderType},
           orderId_{orderId},
           side_{side},
-          price_{price},
+          price_{orderType == OrderType::Market ? MarketPrice(side) : price},
           initialQuantity_{quantity},
           remainingQuantity_{quantity} {}
+
+    // Market order convenience constructor (no price).
+    Order(OrderId orderId, Side side, Quantity quantity)
+        : Order{OrderType::Market, orderId, side, quantity, MarketPrice(side)} {}
 
     OrderType GetOrderType() const { return orderType_; }
     OrderId GetOrderId() const { return orderId_; }
