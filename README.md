@@ -5,8 +5,8 @@ A fast limit order book and matching engine in C++23, with a live viewer that sh
 ![The live viewer: last price, top 5 levels per side, trade and reject counts, and a price chart](docs/images/viewer.png)
 
 - **Matching engine:** price-time priority, five order types, cancel and modify, about 12M operations per second on one core.
-- **Live viewer:** watch simulated market order flow move through the book.
-- **Tested hard:** 83 tests, including step-by-step checks against a reference book and a stochastic market simulation.
+- **Live viewer:** watch simulated market order flow move through the book, and trade against it with your own orders.
+- **Tested hard:** 92 tests, including step-by-step checks against a reference book and a stochastic market simulation.
 
 It is the first piece of a larger exchange simulator (see [Roadmap](#roadmap)).
 
@@ -43,7 +43,7 @@ If `g++ --version` shows a version older than 15, add `-DCMAKE_CXX_COMPILER=g++-
 ```bash
 ./build-release/orderbook_viz      # live viewer (opens a window)
 ./build-release/orderbook_demo     # text walkthrough of every order type
-ctest --test-dir build-release     # run the 83 tests (a few seconds)
+ctest --test-dir build-release     # run the 92 tests (a few seconds)
 ```
 
 ---
@@ -68,6 +68,7 @@ The viewer runs a simulated market (Hawkes-process order flow, the same model th
 - the **top 5 price levels** on each side, with depth bars
 - how many **trades** happened and how many orders were **rejected**, by reason
 - a **price chart** of the last trade over the bid–ask band
+- an **order ticket** and a **My orders** list, so you can trade against the simulated market
 
 ### Controls
 
@@ -78,8 +79,20 @@ The viewer runs a simulated market (Hawkes-process order flow, the same model th
 | Stable book | On by default. Keeps the book deep, as in a liquid market. Turn it off to see the raw test regime, where one side often runs empty |
 | Reduce motion | Turns off all animation. Values are always exact; only the motion goes |
 | Play / Pause / Step | Run, stop, or advance exactly one event (Step works while paused) |
-| Reset | Restart the current scenario |
+| Reset | Restart the current scenario (also clears your orders) |
 | Speed slider | Events per frame, from 1 to 10,000 |
+
+### Placing your own orders
+
+The right-hand column lets you trade against the simulated market while it runs (or while it is paused).
+
+1. Choose **Buy** or **Sell**, an order **Type** (GTC, GFD, FAK, FOK or MKT) and a **Qty**.
+2. Set the **Price**. It follows the best price (best ask for a buy, best bid for a sell) until you type one; **clicking a price in the order book fills it in**. Clicking only fills in the field, it never sends an order. **Best** goes back to following the market.
+3. Press the button, which says exactly what will be sent (e.g. **Buy 10 @ 10009**), or press Enter in the Price or Qty field. The line under it reports what happened: filled, resting, or rejected with the reason.
+
+**My orders** lists every order you sent, newest first, with its status: resting, partly filled, filled, cancelled, expired, or the reject reason (hover it for the full name). Resting orders have a **Cancel** button. They also show in the order book as a dot next to the price and "you N" next to the quantity, and simulated orders fill them as the market moves into them. The simulation never cancels your orders. **End of day** expires every GoodForDay order.
+
+Your orders go through the engine and the reference book exactly like simulated ones, so the consistency check below covers them too.
 
 The footer says **engine matches reference** while the engine agrees with a slow, simple reference book that sees the same events. If they ever disagree it turns red.
 
@@ -89,10 +102,11 @@ The footer says **engine matches reference** while the engine agrees with a slow
 ./build-release/orderbook_viz --scenario Volatile --speed 500
 ./build-release/orderbook_viz --reduce-motion
 ./build-release/orderbook_viz --raw-book                    # start with Stable book off
+./build-release/orderbook_viz --demo-orders                 # place a few example orders after start-up
 ./build-release/orderbook_viz --screenshot shot.ppm 300     # render 300 frames, save the last, exit
 ```
 
-Use a Release build for the viewer: at 10,000 events per frame it runs at about 48 fps in Release, against about 4 fps in a Debug build with sanitizers.
+Use a Release build for the viewer. Measured on WSLg, where Mesa renders in software: about 53 fps at the default speed and 42 fps at 10,000 events per frame in Release, against a few fps in a Debug build with sanitizers.
 
 ---
 
@@ -178,13 +192,14 @@ ctest --test-dir build -j4 --output-on-failure     # about 90 s under the saniti
 
 ### Tests
 
-There are 83 tests in three layers, and every random input is seeded, so failures always reproduce.
+There are 92 tests in four groups, and every random input is seeded, so failures always reproduce.
 
 | Layer | What it checks |
 |---|---|
 | Unit (41) | One behaviour per test: each order type, cancel, modify, rejects |
 | Differential (20) | 20 seeds × 5,000 random operations, compared step by step with a simple reference book |
 | Market simulation (22) | Realistic order flow in several regimes (calm, bursts, crash, a 1M-order book, sweeps), checked after every event by the reference book and an independent invariant checker |
+| Viewer model (9) | Your orders in the viewer: fills on arrival and later from simulated flow, every status, cancel, end of day, and that the simulation never cancels them |
 
 ```bash
 ./build/orderbook_tests --gtest_filter='FillOrKill.*'          # run one group

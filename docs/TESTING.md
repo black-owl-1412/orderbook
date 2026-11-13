@@ -1,12 +1,13 @@
 # Testing
 
-Three layers, all run by `ctest` (83 tests; about 74 s under ASan+UBSan with `-j4`, most of it the 1M-order deep-book scenario).
+Four suites, all run by `ctest` (92 tests; about 74 s under ASan+UBSan with `-j4`, most of it the 1M-order deep-book scenario).
 
 | Suite | File | What it does |
 |---|---|---|
 | Unit | `tests/OrderBookTests.cpp` | 41 hand-written cases, one behaviour each |
 | Differential | `tests/DifferentialTests.cpp` | 20 seeds × 5,000 random ops covering every order type, modify and end-of-day, checked step by step against the reference book |
 | Market simulation | `tests/MarketSimTests.cpp` | Stochastic, market-like order flow in several regimes, checked by a reference model **and** an invariant ledger after every event, plus statistical checks that the flow is realistic |
+| Viewer model | `tests/LiveSimTests.cpp` | 9 cases for user orders in the live viewer (`apps/viz/LiveSim.h`): fills on arrival and from later simulated flow, every status, cancel, end of day, and that simulated cancels never remove a user order. Two planted bugs (the simulation cancelling user orders; fills not credited to the resting side) were each caught |
 
 Every random source is seeded, so every run is reproducible.
 

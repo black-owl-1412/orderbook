@@ -55,8 +55,10 @@ if(ORDERBOOK_BUILD_TESTS)
   endif()
 
   add_executable(orderbook_tests tests/OrderBookTests.cpp tests/DifferentialTests.cpp
-                                 tests/MarketSimTests.cpp)
-  target_include_directories(orderbook_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+                                 tests/MarketSimTests.cpp tests/LiveSimTests.cpp)
+  # apps/viz for LiveSim.h, the viewer's UI-free model
+  target_include_directories(orderbook_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                                                     ${CMAKE_CURRENT_SOURCE_DIR}/apps/viz)
   target_link_libraries(orderbook_tests PRIVATE orderbook_core orderbook_warnings GTest::gtest_main)
 
   include(GoogleTest)
