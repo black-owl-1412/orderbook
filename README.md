@@ -244,7 +244,6 @@ tests/               test suite; tests/sim/ holds the market simulation and refe
 bench/               benchmarks, latency tool and recorded results
 docs/                TESTING.md, PERFORMANCE.md, images
 legacy/main_v0.cpp   original single-file version (not built)
-.claude/skills/      design rules for the viewer (apple-design)
 ```
 
 ---

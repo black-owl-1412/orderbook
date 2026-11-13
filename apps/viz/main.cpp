@@ -1,5 +1,5 @@
 // Live order-book viewer: last trade price, top 5 levels per side, trade and reject counts,
-// and a live price chart. Design rules: .claude/skills/apple-design/SKILL.md.
+// and a live price chart.
 //   ./build/orderbook_viz [--reduce-motion] [--speed N] [--scenario Name] [--raw-book]
 //   ./build/orderbook_viz --screenshot out.ppm [frames=240]   render, save one frame, exit
 

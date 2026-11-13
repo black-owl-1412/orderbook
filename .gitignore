@@ -3,3 +3,6 @@ build-*/
 .cache/
 compile_commands.json
 failing_prefix_*.txt
+
+# Local Claude Code settings and skills (kept on each machine, not in the repo)
+.claude/
