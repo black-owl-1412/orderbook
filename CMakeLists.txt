@@ -22,6 +22,15 @@ if(ORDERBOOK_SANITIZE)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
+if(MINGW)
+  # Standalone Windows executables: libstdc++, libgcc and winpthread are linked in, so the
+  # .exe files run on any Windows PC without MinGW DLLs next to them.
+  add_link_options(-static)
+  # std::print's Windows console support (std::__open_terminal, __write_to_terminal)
+  # lives in libstdc++exp on MinGW GCC 14/15.
+  link_libraries(stdc++exp)
+endif()
+
 # Warnings live on an interface target so they apply to our code only.
 add_library(orderbook_warnings INTERFACE)
 target_compile_options(orderbook_warnings INTERFACE -Wall -Wextra -Wpedantic -Wshadow)
@@ -115,7 +124,7 @@ if(ORDERBOOK_BUILD_VIZ)
     implot
     URL https://github.com/epezent/implot/archive/refs/tags/v0.16.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  # JetBrains Mono (SIL Open Font License), loaded at runtime from the build tree.
+  # JetBrains Mono (SIL Open Font License), embedded in the viewer (see below).
   FetchContent_Declare(
     jetbrainsmono
     URL https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip
@@ -135,11 +144,23 @@ if(ORDERBOOK_BUILD_VIZ)
                                                  ${implot_SOURCE_DIR})
   target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 
-  add_executable(orderbook_viz apps/viz/main.cpp)
+  # The font is compiled into the viewer, so the executable needs no files next to it.
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFiles.cmake)
+  set(ORDERBOOK_FONT_TTF ${jetbrainsmono_SOURCE_DIR}/fonts/ttf)
+  embed_files(${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedFonts.cpp orderbook_fonts
+    JetBrainsMonoRegular ${ORDERBOOK_FONT_TTF}/JetBrainsMono-Regular.ttf
+    JetBrainsMonoBold ${ORDERBOOK_FONT_TTF}/JetBrainsMono-Bold.ttf)
+
+  add_executable(orderbook_viz apps/viz/main.cpp ${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedFonts.cpp)
   # tests/ for the header-only order-flow simulator in tests/sim/
   target_include_directories(orderbook_viz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-  # The viewer falls back to ImGui's built-in font if this directory is missing.
-  target_compile_definitions(orderbook_viz PRIVATE
-    ORDERBOOK_FONT_DIR="${jetbrainsmono_SOURCE_DIR}/fonts/ttf")
   target_link_libraries(orderbook_viz PRIVATE orderbook_core imgui orderbook_warnings)
+
+  if(WIN32)
+    # A windowed app (no console window), with an icon and version information.
+    enable_language(RC)
+    configure_file(apps/viz/windows/orderbook_viz.rc.in ${CMAKE_CURRENT_BINARY_DIR}/generated/orderbook_viz.rc @ONLY)
+    target_sources(orderbook_viz PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated/orderbook_viz.rc)
+    set_target_properties(orderbook_viz PROPERTIES WIN32_EXECUTABLE ON)
+  endif()
 endif()

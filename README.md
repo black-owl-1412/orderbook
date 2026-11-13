@@ -14,7 +14,9 @@ It is the first piece of a larger exchange simulator (see [Roadmap](#roadmap)).
 
 ## Quick start
 
-Tested on Ubuntu 26.04 (native and WSL2). Other Linux distributions work with the equivalent packages.
+Tested on Ubuntu 26.04 (native and WSL2) and on Windows 11. Other Linux distributions work with the equivalent packages. For Windows, see [Windows](#windows) below.
+
+### Linux
 
 **1. Install the tools and libraries**
 
@@ -45,6 +47,29 @@ If `g++ --version` shows a version older than 15, add `-DCMAKE_CXX_COMPILER=g++-
 ./build-release/orderbook_demo     # text walkthrough of every order type
 ctest --test-dir build-release     # run the 92 tests (a few seconds)
 ```
+
+### Windows
+
+On Windows the project builds with [MSYS2](https://www.msys2.org)'s GCC 15 and produces a standalone **`orderbook_viz.exe`**: a single file with its font and icon built in and no DLLs to ship, so it runs on any Windows 10 or 11 PC by double-clicking it.
+
+**1. Install MSYS2**, then open the **MSYS2 UCRT64** shell from the Start menu and install the compiler and build tools:
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja git
+```
+
+**2. Build** (in the same UCRT64 shell):
+
+```bash
+git clone https://github.com/black-owl-1412/orderbook.git && cd orderbook
+cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release -DORDERBOOK_BUILD_BENCHMARKS=OFF
+cmake --build build-win
+ctest --test-dir build-win     # the same 92 tests, natively on Windows
+```
+
+**3. Run:** double-click `build-win\orderbook_viz.exe` in Explorer, or run `./build-win/orderbook_viz.exe`. Copy the `.exe` anywhere you like; it needs nothing else. The text demo is `build-win\orderbook_demo.exe` (run it from a terminal).
+
+The window opens at 1080 × 900, or smaller if that doesn't fit your screen, and follows the Windows display scaling.
 
 ---
 
@@ -255,6 +280,8 @@ include/orderbook/   public headers: OrderBook, Order, OrderModify, Trade, Level
 src/                 matching engine
 apps/main.cpp        text demo
 apps/viz/            live viewer (Dear ImGui, ImPlot, GLFW)
+apps/viz/windows/    Windows icon (and its generator, make_icon.py) and version resource
+cmake/               EmbedFiles.cmake: compiles the font into the viewer
 tests/               test suite; tests/sim/ holds the market simulation and reference book
 bench/               benchmarks, latency tool and recorded results
 docs/                TESTING.md, PERFORMANCE.md, images
@@ -268,10 +295,11 @@ legacy/main_v0.cpp   original single-file version (not built)
 | Problem | Fix |
 |---|---|
 | The build fails on C++23 features such as `<flat_map>`, `<print>` or `<expected>` | Your compiler is too old. Install `g++-15` and configure with `-DCMAKE_CXX_COMPILER=g++-15` |
+| Windows: `cmake`, `g++` or `ninja` not found | Use the **MSYS2 UCRT64** shell (not "MSYS2 MSYS" or a plain Command Prompt), and install the packages from the Windows step |
+| Windows: `undefined reference to std::__open_terminal` | You are linking without CMake. `std::print` on MinGW needs `-lstdc++exp`, which the CMake build adds |
 | `Could NOT find X11` or Wayland errors while configuring | Install the GUI packages from step 1, or build without the viewer: `-DORDERBOOK_BUILD_VIZ=OFF` |
 | The viewer fails with a GLFW error about the display | It needs a graphical session. On WSL2 that means WSLg (Windows 11, or Windows 10 with WSL from the Microsoft Store). Over SSH, use the demo instead |
 | `libEGL warning` / `ZINK` lines when the viewer starts on WSL2 | Harmless: Mesa is falling back to software rendering |
-| `font not found ..., using ImGui's default font` | The font download was skipped or deleted. Re-run the `cmake` configure step |
 | The viewer is slow at high speeds | Use the Release build (`build-release`); Debug with sanitizers is about 10× slower |
 | Configure fails while downloading | The first configure needs internet. If `libgtest-dev`, `libbenchmark-dev` or `libglfw3-dev` are installed, those are used instead of downloading |
 
