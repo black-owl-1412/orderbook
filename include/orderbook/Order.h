@@ -1,6 +1,5 @@
 #pragma once
 
-#include <list>
 #include <memory>
 #include <stdexcept>
 
@@ -49,9 +48,8 @@ private:
     Quantity remainingQuantity_;
 };
 
+// Convenience for callers. The book copies the order into its own pooled
+// storage, so it never shares ownership with the caller.
 using OrderPointer = std::shared_ptr<Order>;
-// std::list: iterators stay valid when other elements are inserted/erased,
-// which lets the book store an iterator per order for O(1) cancel.
-using OrderPointers = std::list<OrderPointer>;
 
 }  // namespace orderbook

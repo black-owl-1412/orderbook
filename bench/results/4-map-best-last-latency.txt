@@ -1,0 +1,7 @@
+1000000 ops, 66002 orders resting at end
+
+op              count     p50     p90     p99    p99.9  max (ns)
+limit add      599720     118     204     402      780    658441
+market add      50137     151     283     488      964     39598
+cancel         300051      95     189     310      776     68768
+modify          50092     102     312     524     1659    105198

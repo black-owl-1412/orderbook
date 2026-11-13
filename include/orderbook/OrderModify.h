@@ -21,6 +21,8 @@ public:
     Price GetPrice() const { return price_; }
     Quantity GetQuantity() const { return quantity_; }
 
+    Order ToOrder(OrderType type) const { return Order{type, orderId_, side_, quantity_, price_}; }
+
     OrderPointer ToOrderPointer(OrderType type) const {
         return std::make_shared<Order>(type, orderId_, side_, quantity_, price_);
     }

@@ -12,6 +12,7 @@ endif()
 
 option(ORDERBOOK_BUILD_TESTS "Build the unit tests" ON)
 option(ORDERBOOK_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+option(ORDERBOOK_FLAT_LEVELS "Store price levels in std::flat_map (ON) or std::map (OFF)" ON)
 option(ORDERBOOK_BUILD_BENCHMARKS "Build benchmarks (use a Release build for real numbers)" ON)
 
 if(ORDERBOOK_SANITIZE)
@@ -28,6 +29,10 @@ target_compile_options(orderbook_warnings INTERFACE -Wall -Wextra -Wpedantic -Ws
 add_library(orderbook_core STATIC src/OrderBook.cpp)
 target_include_directories(orderbook_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(orderbook_core PRIVATE orderbook_warnings)
+if(ORDERBOOK_FLAT_LEVELS)
+  # PUBLIC: the definition changes the layout of OrderBook, so every user must agree.
+  target_compile_definitions(orderbook_core PUBLIC ORDERBOOK_FLAT_LEVELS)
+endif()
 
 # ---- demo ----
 add_executable(orderbook_demo apps/main.cpp)
@@ -48,7 +53,9 @@ if(ORDERBOOK_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)
   endif()
 
-  add_executable(orderbook_tests tests/OrderBookTests.cpp tests/DifferentialTests.cpp)
+  add_executable(orderbook_tests tests/OrderBookTests.cpp tests/DifferentialTests.cpp
+                                 tests/MarketSimTests.cpp)
+  target_include_directories(orderbook_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_link_libraries(orderbook_tests PRIVATE orderbook_core orderbook_warnings GTest::gtest_main)
 
   include(GoogleTest)

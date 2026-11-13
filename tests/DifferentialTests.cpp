@@ -2,7 +2,7 @@
 // obviously-correct reference implementation with the same random operations
 // and require identical results, trades and depth after every single step.
 //
-// The reference is O(n) per operation and makes no attempt to be fast; it exists
+// The reference (tests/sim/ReferenceBook.h) makes no attempt to be fast; it exists
 // so that performance refactors of the real engine can be checked mechanically.
 
 #include <gtest/gtest.h>
@@ -18,141 +18,13 @@
 
 #include "orderbook/OrderBook.h"
 #include "orderbook/ToString.h"
+#include "sim/ReferenceBook.h"
 
 using namespace orderbook;
 
 namespace {
 
-class ReferenceBook {
-public:
-    AddResult Add(OrderType type, OrderId id, Side side, Price price, Quantity qty) {
-        if (qty == 0)
-            return std::unexpected(RejectReason::ZeroQuantity);
-        if (Find(id))
-            return std::unexpected(RejectReason::DuplicateOrderId);
-        if (type == OrderType::Market)
-            price = MarketPrice(side);
-
-        if (type == OrderType::FillAndKill || type == OrderType::Market) {
-            if (!BestCrossing(side, price))
-                return std::unexpected(RejectReason::CannotMatch);
-        } else if (type == OrderType::FillOrKill) {
-            std::uint64_t available = 0;
-            for (const auto& r : resting_)
-                if (r.side != side && Crosses(side, price, r.price))
-                    available += r.remaining;
-            if (available < qty)
-                return std::unexpected(RejectReason::CannotFullyFill);
-        }
-
-        Trades trades;
-        Quantity remaining = qty;
-        while (remaining > 0) {
-            auto best = BestCrossing(side, price);
-            if (!best)
-                break;
-            Resting& maker = resting_[*best];
-            const Quantity q = std::min(remaining, maker.remaining);
-            remaining -= q;
-            maker.remaining -= q;
-            const OrderId bidId = side == Side::Buy ? id : maker.id;
-            const OrderId askId = side == Side::Buy ? maker.id : id;
-            trades.emplace_back(TradeInfo{bidId, maker.price, q}, TradeInfo{askId, maker.price, q});
-            if (maker.remaining == 0)
-                resting_.erase(resting_.begin() + static_cast<std::ptrdiff_t>(*best));
-        }
-
-        if (remaining > 0 && !IsImmediateOrCancel(type))
-            resting_.push_back({id, type, side, price, remaining, nextSeq_++});
-        return trades;
-    }
-
-    CancelResult Cancel(OrderId id) {
-        auto idx = Find(id);
-        if (!idx)
-            return std::unexpected(RejectReason::UnknownOrderId);
-        resting_.erase(resting_.begin() + static_cast<std::ptrdiff_t>(*idx));
-        return {};
-    }
-
-    AddResult Modify(OrderId id, Side side, Price price, Quantity qty) {
-        auto idx = Find(id);
-        if (!idx)
-            return std::unexpected(RejectReason::UnknownOrderId);
-        if (qty == 0)
-            return std::unexpected(RejectReason::ZeroQuantity);
-        const OrderType type = resting_[*idx].type;
-        (void)Cancel(id);
-        return Add(type, id, side, price, qty);
-    }
-
-    std::vector<OrderId> EndOfDay() {
-        std::vector<OrderId> ids;
-        for (const auto& r : resting_)
-            if (r.type == OrderType::GoodForDay)
-                ids.push_back(r.id);
-        std::ranges::sort(ids);
-        std::erase_if(resting_, [](const Resting& r) { return r.type == OrderType::GoodForDay; });
-        return ids;
-    }
-
-    std::size_t Size() const { return resting_.size(); }
-
-    OrderBookLevelInfos Depth() const {
-        std::map<Price, Quantity, std::greater<Price>> bids;
-        std::map<Price, Quantity> asks;
-        for (const auto& r : resting_)
-            (r.side == Side::Buy ? bids[r.price] : asks[r.price]) += r.remaining;
-        LevelInfos b, a;
-        for (auto [p, q] : bids) b.push_back({p, q});
-        for (auto [p, q] : asks) a.push_back({p, q});
-        return {b, a};
-    }
-
-private:
-    struct Resting {
-        OrderId id;
-        OrderType type;
-        Side side;
-        Price price;
-        Quantity remaining;
-        std::uint64_t seq;  // arrival order for time priority
-    };
-
-    static bool Crosses(Side aggressor, Price aggressorPrice, Price restingPrice) {
-        return aggressor == Side::Buy ? aggressorPrice >= restingPrice
-                                      : aggressorPrice <= restingPrice;
-    }
-
-    // Index of the best resting order on the opposite side that crosses, if any.
-    std::optional<std::size_t> BestCrossing(Side side, Price price) const {
-        std::optional<std::size_t> best;
-        for (std::size_t i = 0; i < resting_.size(); ++i) {
-            const auto& r = resting_[i];
-            if (r.side == side || !Crosses(side, price, r.price))
-                continue;
-            if (!best) {
-                best = i;
-                continue;
-            }
-            const auto& b = resting_[*best];
-            const bool betterPrice = side == Side::Buy ? r.price < b.price : r.price > b.price;
-            if (betterPrice || (r.price == b.price && r.seq < b.seq))
-                best = i;
-        }
-        return best;
-    }
-
-    std::optional<std::size_t> Find(OrderId id) const {
-        for (std::size_t i = 0; i < resting_.size(); ++i)
-            if (resting_[i].id == id)
-                return i;
-        return std::nullopt;
-    }
-
-    std::vector<Resting> resting_;
-    std::uint64_t nextSeq_ = 0;
-};
+using sim::ReferenceBook;  // shared oracle, see tests/sim/ReferenceBook.h
 
 void ExpectSameAdd(const AddResult& real, const AddResult& ref, std::size_t step) {
     ASSERT_EQ(real.has_value(), ref.has_value())
@@ -215,7 +87,14 @@ void RunRandomSession(std::uint64_t seed, std::size_t steps) {
             // 2% chance to reuse an existing id to exercise DuplicateOrderId.
             const OrderId id = pct(rng) < 2 ? anyId(rng) : nextId++;
             const Price p = price(rng);
-            const Quantity q = qty(rng);
+            Quantity q = qty(rng);
+            // Boundary cases random sizes almost never hit: a FillOrKill for EXACTLY the
+            // available quantity (must fill) or one more (must reject).
+            if (type == OrderType::FillOrKill && coin(rng)) {
+                const Quantity available = ref.CrossingQuantity(side, p, Quantity{1'000'000});
+                if (available > 0)
+                    q = available + (coin(rng) ? 0 : 1);
+            }
             ExpectSameAdd(real.AddOrder(Order{type, id, side, q, p}), ref.Add(type, id, side, p, q),
                           step);
         } else if (roll < 85) {
