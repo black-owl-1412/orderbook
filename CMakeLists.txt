@@ -14,6 +14,7 @@ option(ORDERBOOK_BUILD_TESTS "Build the unit tests" ON)
 option(ORDERBOOK_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
 option(ORDERBOOK_FLAT_LEVELS "Store price levels in std::flat_map (ON) or std::map (OFF)" ON)
 option(ORDERBOOK_BUILD_BENCHMARKS "Build benchmarks (use a Release build for real numbers)" ON)
+option(ORDERBOOK_BUILD_VIZ "Build the live order-book viewer (Dear ImGui + GLFW)" ON)
 
 if(ORDERBOOK_SANITIZE)
   # Applied globally so the library, tests and any fetched deps agree.
@@ -82,4 +83,61 @@ if(ORDERBOOK_BUILD_BENCHMARKS)
 
   add_executable(orderbook_latency bench/Latency.cpp)
   target_link_libraries(orderbook_latency PRIVATE orderbook_core orderbook_warnings)
+endif()
+
+# ---- live viewer (Dear ImGui + GLFW + OpenGL3) ----
+if(ORDERBOOK_BUILD_VIZ)
+  find_package(OpenGL REQUIRED)
+  include(FetchContent)
+
+  find_package(glfw3 3.3 QUIET)
+  if(NOT glfw3_FOUND)
+    FetchContent_Declare(
+      glfw
+      URL https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(glfw)
+  endif()
+
+  # Dear ImGui has no CMake build of its own: compile the core and the two backends we use.
+  FetchContent_Declare(
+    imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  # ImPlot: the live price chart.
+  FetchContent_Declare(
+    implot
+    URL https://github.com/epezent/implot/archive/refs/tags/v0.16.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  # JetBrains Mono (SIL Open Font License), loaded at runtime from the build tree.
+  FetchContent_Declare(
+    jetbrainsmono
+    URL https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(imgui implot jetbrainsmono)
+
+  add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${implot_SOURCE_DIR}/implot.cpp
+    ${implot_SOURCE_DIR}/implot_items.cpp)
+  target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends
+                                                 ${implot_SOURCE_DIR})
+  target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
+
+  add_executable(orderbook_viz apps/viz/main.cpp)
+  # tests/ for the header-only order-flow simulator in tests/sim/
+  target_include_directories(orderbook_viz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  # The viewer falls back to ImGui's built-in font if this directory is missing.
+  target_compile_definitions(orderbook_viz PRIVATE
+    ORDERBOOK_FONT_DIR="${jetbrainsmono_SOURCE_DIR}/fonts/ttf")
+  target_link_libraries(orderbook_viz PRIVATE orderbook_core imgui orderbook_warnings)
 endif()

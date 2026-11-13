@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -90,12 +91,22 @@ struct FlowConfig {
     Quantity maxSize = 1'000'000;
 
     double badCancelProb = 0.02;  // cancel a dead or never-existing id
+    // > 0: on top of the Hawkes cancel stream, every resting order is cancelled at this
+    // rate (per unit time), so the total cancel rate grows with the book. This gives the
+    // book a stable size; with only a fixed-rate cancel stream its order count wanders
+    // like a random walk and one side often runs empty. 0 keeps the original model.
+    double cancelRatePerOrder = 0.0;
 
     double imbalanceDecay = 0.5;  // per unit time
     double marketWeight = 1.0;    // pressure contributed by one market order
     double limitWeight = 0.3;     // ... and by one limit order
     double priceImpact = 0.0;     // ticks per unit of pressure, per event
     double midNoise = 0.0;        // Gaussian ticks per event
+    // In [0, 1]: after each event the generator's mid moves this fraction of the way to
+    // the book's own mid (when both sides exist). Traders quote around the visible book,
+    // so without this the generator's mid can drift away and new orders land off-centre.
+    // 0 keeps the original model.
+    double midReversion = 0.0;
 
     double sweepProb = 0.0;       // market order sized to sweep visible depth
     double sweepFactor = 1.5;     // multiple of the visible quantity
@@ -121,7 +132,7 @@ public:
           mid_{cfg_.initialMid} {}
 
     Event Next(const ReferenceBook& book) {
-        const auto arrival = hawkes_.Next();
+        const auto arrival = NextArrival(book);
         double t = arrival.time;
         if (cfg_.timestampResolution > 0)
             t = std::floor(t / cfg_.timestampResolution) * cfg_.timestampResolution;
@@ -159,6 +170,14 @@ public:
                 break;
         }
         mid_ += cfg_.priceImpact * imbalance_ + cfg_.midNoise * normal_(rng_);
+        if (cfg_.midReversion > 0) {
+            // The event has not been applied to the book yet, so this uses the book's
+            // mid before it: a one-event lag that does not matter here.
+            const auto bid = book.BestBid();
+            const auto ask = book.BestAsk();
+            if (bid && ask)
+                mid_ += cfg_.midReversion * (0.5 * (*bid + *ask) - mid_);
+        }
         return e;
     }
 
@@ -167,6 +186,30 @@ public:
     std::uint64_t BadCancels() const { return badCancels_; }
 
 private:
+    // The next Hawkes arrival, or, with cancelRatePerOrder > 0, a per-order cancel if one
+    // comes first. The two streams compete: per-order cancels form a Poisson process of
+    // rate theta * (resting orders), which is constant between events, so its waiting time
+    // can be redrawn after every event (memorylessness). The Hawkes arrival that lost the
+    // race is kept for the next call.
+    HawkesProcess::Arrival NextArrival(const ReferenceBook& book) {
+        if (cfg_.cancelRatePerOrder <= 0)
+            return hawkes_.Next();
+        if (!pending_)
+            pending_ = hawkes_.Next();
+        const double rate = cfg_.cancelRatePerOrder * static_cast<double>(book.Size());
+        if (rate > 0) {
+            const double cancelTime = clock_ + std::exponential_distribution<double>{rate}(rng_);
+            if (cancelTime < pending_->time) {
+                clock_ = cancelTime;
+                return {cancelTime, static_cast<std::size_t>(EventType::Cancel)};
+            }
+        }
+        const auto arrival = *pending_;
+        pending_.reset();
+        clock_ = arrival.time;
+        return arrival;
+    }
+
     double DrawDistance() {
         double d = 0;
         if (cfg_.distanceLaw == DistanceLaw::Exponential) {
@@ -208,6 +251,8 @@ private:
     double mid_;
     double imbalance_ = 0.0;
     double lastTime_ = 0.0;
+    double clock_ = 0.0;  // time of the last arrival, before timestamp rounding
+    std::optional<HawkesProcess::Arrival> pending_;
     std::uint64_t seq_ = 0;
     OrderId nextId_ = 1;
     std::size_t sweeps_ = 0;

@@ -21,119 +21,13 @@
 #include "sim/Driver.h"
 #include "sim/Hawkes.h"
 #include "sim/OrderFlow.h"
+#include "sim/Scenarios.h"
 #include "sim/Stats.h"
 
 using namespace sim;
+using namespace sim::scenarios;
 
 namespace {
-
-// Indices: BuyLimit, SellLimit, BuyMarket, SellMarket, Cancel.
-constexpr std::size_t BL = 0, SL = 1, BM = 2, SM = 3, CX = 4;
-constexpr std::array<double, kEventTypes> kBaseMu{1.0, 1.0, 0.25, 0.25, 1.4};
-
-FlowConfig WithMidDynamics(FlowConfig c) {
-    c.priceImpact = 0.02;
-    c.midNoise = 0.05;
-    return c;
-}
-
-FlowConfig Poisson() {
-    FlowConfig c;
-    c.arrivals = UniformHawkes(kBaseMu, 0.0, 1.0);
-    return WithMidDynamics(c);
-}
-
-FlowConfig Calm() {
-    FlowConfig c;
-    c.arrivals = UniformHawkes(kBaseMu, 0.2, 1.0);  // branching ratio 0.2
-    return WithMidDynamics(c);
-}
-
-// Near-critical: strong self-excitation of every type, market orders trigger
-// refills on the opposite side, fast decay => short violent bursts; bigger sizes.
-FlowConfig Volatile() {
-    FlowConfig c;
-    const double beta = 5.0;
-    HawkesParams p;
-    p.mu.assign(kBaseMu.begin(), kBaseMu.end());
-    p.beta = Constant(kEventTypes, beta);
-    Matrix g = Constant(kEventTypes, 0.04);  // branching matrix alpha/beta
-    for (std::size_t i = 0; i < kEventTypes; ++i)
-        g[i][i] += 0.65;
-    g[SL][BM] += 0.1;  // buy market orders excite sell-limit refills
-    g[BL][SM] += 0.1;  // and vice versa
-    p.alpha = g;
-    for (auto& row : p.alpha)
-        for (double& a : row)
-            a *= beta;
-    c.arrivals = p;
-    c.sizeLogMean = 2.5;
-    c.sizeLogSigma = 1.3;
-    c = WithMidDynamics(c);
-    c.priceImpact = 0.03;
-    return c;
-}
-
-// One-sided crash: aggressive selling dominates, few buyers, selling is self-exciting.
-FlowConfig Crash() {
-    FlowConfig c;
-    const double beta = 2.0;
-    HawkesParams p;
-    p.mu = {0.4, 1.4, 0.05, 1.0, 1.2};
-    p.beta = Constant(kEventTypes, beta);
-    Matrix g = Constant(kEventTypes, 0.03);
-    g[SM][SM] += 0.5;
-    g[SL][SM] += 0.15;
-    p.alpha = g;
-    for (auto& row : p.alpha)
-        for (double& a : row)
-            a *= beta;
-    c.arrivals = p;
-    c = WithMidDynamics(c);
-    c.priceImpact = 0.03;
-    return c;
-}
-
-// Many orders at the very same prices: mid pinned between two ticks, tiny distances.
-FlowConfig Congested() {
-    FlowConfig c;
-    c.arrivals = UniformHawkes({2.0, 2.0, 0.3, 0.3, 0.4}, 0.2, 1.0);
-    c.distanceMean = 0.3;
-    c.sizeLogMean = 1.0;
-    c.sizeLogSigma = 0.5;
-    return c;  // no mid dynamics: price stays put
-}
-
-FlowConfig Simultaneous() {
-    FlowConfig c = Calm();
-    c.timestampResolution = 0.5;  // ~2 events per timestamp on average, more in bursts
-    return c;
-}
-
-FlowConfig Sweep() {
-    FlowConfig c = Calm();
-    c.sweepProb = 0.05;
-    c.sweepFactor = 1.5;
-    c.sweepLevels = 5;
-    return c;
-}
-
-FlowConfig PowerLawDistances() {
-    FlowConfig c = Calm();
-    c.distanceLaw = DistanceLaw::PowerLaw;
-    return c;
-}
-
-FlowConfig Intraday(double dayLength) {
-    FlowConfig c = Calm();
-    // U-shape: s(x) = 0.5 + 6 (x - 1/2)^2 for x = time of day in [0, 1): 2 at open/close, 0.5 midday.
-    c.arrivals.baselineShape = [dayLength](double t) {
-        const double x = std::fmod(t, dayLength) / dayLength - 0.5;
-        return 0.5 + 6.0 * x * x;
-    };
-    c.arrivals.baselineShapeMax = 2.0;
-    return c;
-}
 
 void PrintStats(const std::string& name, const RunResult& r) {
     const RunStats& s = r.stats;
@@ -230,6 +124,18 @@ TEST(Scenario, Sweep) {
 
 TEST(Scenario, PowerLawDistances) {
     RunChecked("powerlaw", PowerLawDistances(), 61);
+}
+
+TEST(Scenario, StableBookCalm) {
+    // The viewer's default flow (per-order cancels, mid reversion, refills) must pass the
+    // same reference and ledger checks as the raw regimes.
+    const auto r = RunChecked("stable_calm", StableBook(Calm()), 71);
+    EXPECT_GT(r.stats.restingAtEnd, 20u);
+}
+
+TEST(Scenario, StableBookVolatile) {
+    const auto r = RunChecked("stable_volatile", StableBook(Volatile()), 72);
+    EXPECT_GT(r.stats.restingAtEnd, 20u);
 }
 
 // ============================ Hawkes process ================================

@@ -1,6 +1,6 @@
 # Testing
 
-Three layers, all run by `ctest` (81 tests; about 74 s under ASan+UBSan with `-j4`, most of it the 1M-order deep-book scenario).
+Three layers, all run by `ctest` (83 tests; about 74 s under ASan+UBSan with `-j4`, most of it the 1M-order deep-book scenario).
 
 | Suite | File | What it does |
 |---|---|---|
@@ -44,6 +44,8 @@ Every random source is seeded, so every run is reproducible.
 | Simultaneous events | 41 | 6,324 | 203 | 12,597 events share a timestamp |
 | Sweep | 51 | 6,183 | 368 | 173 sweep orders, up to 10 levels each |
 | Power-law distances | 61 | 6,367 | 234 | |
+| Stable book, calm | 71 | 6,453 | 1 | viewer default flow (`StableBook`), 114 orders resting at the end |
+| Stable book, volatile | 72 | 10,601 | 0 | 710 orders resting at the end |
 
 The engine produced **no mismatch and no invariant violation** in any scenario.
 
@@ -62,7 +64,7 @@ The engine produced **no mismatch and no invariant violation** in any scenario.
 Caveats, read from the same numbers:
 - **The sign autocorrelation decays roughly geometrically, not like a power law.** Exponential Hawkes kernels have short memory. Real markets show long memory, which would need power-law kernels or meta-orders.
 - **Fat-tailed mid returns appear in the Poisson baseline too.** They come mostly from book mechanics (the mid jumps when the touch level empties), not from Hawkes clustering.
-- **The calm book is thin:** it ends with 2–37 resting orders. Depth peaks 2 ticks from the mid and then decreases.
+- **The calm book is thin:** it ends with 2–37 resting orders. Depth peaks 2 ticks from the mid and then decreases. Cancels arrive at a fixed total rate, so the order count wanders like a random walk. `scenarios::StableBook` (in `tests/sim/Scenarios.h`, used by the live viewer) fixes this with per-order cancels (`cancelRatePerOrder`), mid reversion towards the book (`midReversion`) and refills after market orders; both new options default to 0, so the scenarios above are unchanged.
 - **The crash regime is a stress test, not a calibrated one.** The mid falls about 37% in 20,000 events.
 - **The market simulation has only the five event types from the spec.** FAK, FOK, GFD and modify are covered by the differential suite.
 - **Simultaneous events:** the engine has no clock, so events that share a timestamp are processed in stream order.
